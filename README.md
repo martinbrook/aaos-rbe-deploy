@@ -11,7 +11,8 @@ This repository contains only the custom overlay files. It is applied on top of 
 - **k3d** (k3s-in-Docker): cluster management
 - **kubectl**: Kubernetes CLI
 - **kustomize**: built into `kubectl apply -k` (or standalone)
-- **AOSP source**: Android 15 synced via `repo init -b android-15.0.0_r1`
+- **repo** tool: [Android repo](https://source.android.com/docs/setup/download#installing-repo)
+- **~300GB disk** for AOSP source tree
 
 ## Architecture
 
@@ -75,6 +76,7 @@ aaos-rbe-deploy/
 │   ├── worker-local.yaml            # 4 replicas, no CPU limit, 32Gi memory limit
 │   └── worker-tmpfs-patch.yaml      # tmpfs emptyDir (16Gi) for /worker volume
 └── scripts/
+    ├── sync-aosp.sh                 # Initialize and sync Android 15 AOSP source
     ├── setup-cluster.sh             # Create k3d cluster with port mappings
     ├── deploy.sh                    # Build image, import, clone bb-deployments, apply
     └── start-build.sh               # Copy RBE config, envsetup, lunch, build
@@ -89,7 +91,23 @@ git clone <this-repo-url> aaos-rbe-deploy
 cd aaos-rbe-deploy
 ```
 
-### 2. Create the k3d cluster
+### 2. Sync AOSP source
+
+If you don't already have an Android 15 source tree:
+
+```bash
+./scripts/sync-aosp.sh /path/to/aosp
+```
+
+This initializes and syncs the `android-15.0.0_r1` branch. You can override the branch with `AOSP_BRANCH` and parallelism with `SYNC_JOBS`:
+
+```bash
+AOSP_BRANCH=android-15.0.0_r1 SYNC_JOBS=16 ./scripts/sync-aosp.sh /path/to/aosp
+```
+
+The script also installs the `repo` tool to `~/.local/bin/` if not already available.
+
+### 3. Create the k3d cluster
 
 ```bash
 ./scripts/setup-cluster.sh
@@ -99,7 +117,7 @@ This creates a k3d cluster named `buildbarn` with port mappings:
 - `8980:8980` - gRPC frontend (reproxy connects here)
 - `8081:80` - bb-browser web UI
 
-### 3. Deploy Buildbarn
+### 4. Deploy Buildbarn
 
 ```bash
 ./scripts/deploy.sh
@@ -112,7 +130,7 @@ This script:
 4. Copies the `local-dev/` overlay into the clone
 5. Runs `kubectl apply -k`
 
-### 4. Wait for pods to be ready
+### 5. Wait for pods to be ready
 
 ```bash
 kubectl -n buildbarn get pods -w
@@ -120,14 +138,14 @@ kubectl -n buildbarn get pods -w
 
 All pods should reach `Running` status. The storage pod may take a moment to initialize its PVC.
 
-### 5. Copy RBE config to AOSP tree
+### 6. Copy RBE config to AOSP tree
 
 ```bash
 cp local-dev/rbe_config/buildbarn.json <aosp>/build/soong/rbe_config/
 cp local-dev/rbe_config/empty_creds.json <aosp>/build/soong/rbe_config/
 ```
 
-### 6. Run the build
+### 7. Run the build
 
 From your AOSP source root:
 

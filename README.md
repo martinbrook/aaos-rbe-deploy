@@ -38,7 +38,7 @@ This repository contains only the custom overlay files. It is applied on top of 
 
 | Component | Kind | Replicas | Description |
 |-----------|------|----------|-------------|
-| **bb-storage** | StatefulSet | 1 | CAS and action cache on local PVC (10Gi) |
+| **bb-storage** | StatefulSet | 1 | CAS and action cache on local PVC (50Gi) |
 | **bb-scheduler** | Deployment | 1 | Routes actions to workers; `platformKeyExtractor: static` |
 | **bb-worker** | Deployment | 4 | 8 concurrent actions each = 32 total slots; tmpfs-backed build/cache dirs |
 | **bb-runner** | Sidecar | (in worker) | Custom `aaos-runner:local` image with Android build deps (JDK 17, Python 3, etc.) |
@@ -58,7 +58,7 @@ aaos-rbe-deploy/
 │   │   ├── frontend.jsonnet         # gRPC :8980, scheduler routing, CAS/AC proxy
 │   │   ├── runner-ubuntu22-04.jsonnet
 │   │   ├── scheduler.jsonnet        # platformKeyExtractor: static, 1800s default timeout
-│   │   ├── storage.jsonnet          # Local block-device CAS (8GB) + AC (20MB)
+│   │   ├── storage.jsonnet          # Local block-device CAS (48GB) + AC (20MB)
 │   │   └── worker-ubuntu22-04.jsonnet  # 8 concurrency, 512MB cache, native build dirs
 │   ├── docker/
 │   │   └── aaos-runner/
@@ -71,7 +71,7 @@ aaos-rbe-deploy/
 │   ├── frontend-local.yaml          # No CPU limit, 16Gi memory limit
 │   ├── scheduler-local.yaml
 │   ├── storage-local.yaml           # No CPU limit, 16Gi memory limit
-│   ├── storage-pvc-patch.yaml       # Reduce PVC from 33Gi to 10Gi
+│   ├── storage-pvc-patch.yaml       # CAS PVC set to 50Gi
 │   ├── worker-aaos-image-patch.yaml # Swap runner image to aaos-runner:local
 │   ├── worker-local.yaml            # 4 replicas, no CPU limit, 32Gi memory limit
 │   └── worker-tmpfs-patch.yaml      # tmpfs emptyDir (16Gi) for /worker volume
@@ -148,21 +148,34 @@ cp local-dev/rbe_config/empty_creds.json <aosp>/build/soong/rbe_config/
 
 ### 7. Run the build
 
-From your AOSP source root:
+Use the helper script (recommended — it exports all required env vars):
+
+```bash
+AOSP_ROOT=/path/to/aosp ./scripts/start-build.sh
+```
+
+Or manually from your AOSP source root:
 
 ```bash
 export USE_RBE=1
 export NINJA_REMOTE_NUM_JOBS=72
+export RBE_service=localhost:8980
+export RBE_service_no_auth=true
+export RBE_service_no_security=true
+export RBE_use_application_default_credentials=false
+export RBE_credential_file=build/soong/rbe_config/empty_creds.json
+export RBE_CXX=1 RBE_JAVAC=1 RBE_R8=1 RBE_D8=1
+export RBE_DIR=prebuilts/remoteexecution-client/live
+export RBE_CXX_EXEC_STRATEGY=remote_local_fallback
+export RBE_JAVAC_EXEC_STRATEGY=remote_local_fallback
+export RBE_R8_EXEC_STRATEGY=remote_local_fallback
+export RBE_D8_EXEC_STRATEGY=remote_local_fallback
 source build/envsetup.sh
 lunch sdk_car_x86_64-trunk_staging-userdebug
 m
 ```
 
-Or use the helper script:
-
-```bash
-AOSP_ROOT=/path/to/aosp ./scripts/start-build.sh
-```
+**Important**: Soong does not read `buildbarn.json` automatically. All `RBE_*` variables must be exported in the shell environment before the build. The `start-build.sh` script handles this.
 
 ## Key Configuration Decisions
 
@@ -186,9 +199,9 @@ With 16Gi tmpfs `sizeLimit` plus process memory for 8 concurrent compilation act
 
 Android's reproxy sends platform properties (`container-image`, `OSFamily`, etc.) that don't match any Buildbarn worker pool name. The `static` extractor ignores platform properties entirely, routing all actions to the single worker pool. Without this, actions queue indefinitely waiting for a matching pool.
 
-### Single storage shard
+### 50Gi CAS storage
 
-All CAS and AC data lives on one `storage-0` pod with a 10Gi PVC. This simplifies the deployment for local development. The CAS block store is configured for 8GB and the AC for 20MB, fitting within the PVC.
+All CAS and AC data lives on one `storage-0` pod with a 50Gi PVC. The CAS block store is configured for 48GB and the AC for 20MB. A full AAOS build populates ~40GB of CAS data (toolchain binaries, source inputs, compilation outputs). The original 10Gi/8GB configuration caused constant eviction and `Object not found` errors on workers. On first build with a cold CAS, expect the initial actions to fail remotely while the toolchain (~3GB of clang libraries and headers) is uploaded; `remote_local_fallback` handles this transparently.
 
 ### `remote_local_fallback` execution strategy
 
@@ -200,9 +213,26 @@ Actions that fail remotely (missing tools, platform issues, unsupported action t
 
 ### Empty credentials file (`empty_creds.json`)
 
-reproxy requires `RBE_credential_file` to be set but Buildbarn uses no authentication. The file contains `{}` which satisfies the requirement. The `RBE_service_no_auth` and `RBE_service_no_security` flags in `buildbarn.json` disable TLS and auth.
+reproxy requires `RBE_credential_file` to be set but Buildbarn uses no authentication. The file must be **0 bytes** (a valid empty protobuf message). A file containing `{}` (JSON) does not work — reproxy expects protobuf format and will fail to parse it, falling back to Application Default Credentials.
+
+Additionally, `RBE_use_application_default_credentials` must be explicitly set to `false`. Soong's `rbeAuth()` function defaults to `true` if no credential flag is found in the environment, which causes `Unable to authenticate with RBE` errors on non-Google infrastructure.
+
+The `RBE_service_no_auth` and `RBE_service_no_security` flags disable TLS and auth on the gRPC connection to the Buildbarn frontend.
+
+### `RBE_service` without `grpc://` prefix
+
+The `RBE_service` value must be `localhost:8980` without a `grpc://` prefix. reproxy adds the scheme internally. Including the prefix causes connection failures.
 
 ## Troubleshooting
+
+### `Unable to authenticate with RBE` / Application Default Credentials error
+
+Soong's `rbeAuth()` defaults to `RBE_use_application_default_credentials=true` if no credential flag is found in the environment. This causes reproxy to attempt Google ADC, which fails on non-Google infrastructure.
+
+- Ensure `RBE_use_application_default_credentials=false` is exported
+- Ensure `RBE_credential_file=build/soong/rbe_config/empty_creds.json` is exported
+- Ensure `empty_creds.json` is 0 bytes (not `{}`)
+- Use `scripts/start-build.sh` which exports all required variables
 
 ### reproxy `dial_timeout`
 
@@ -235,6 +265,13 @@ pkill reproxy
 rm -f /tmp/reproxy* /tmp/RBE*
 rm -f out/.lock
 ```
+
+### `Object not found` / `FailedPrecondition` on first build (cold CAS)
+
+On the first build after deploying (or after storage pod restart), the CAS is empty. reproxy must upload the entire input tree (~3GB for the clang toolchain alone) before remote execution can succeed. Early actions will fail remotely and fall back to local — this is expected with `remote_local_fallback`. The CAS warms up progressively and remote execution success rate increases as more inputs are uploaded. A full AAOS build populates ~40GB of CAS data.
+
+- Monitor CAS usage: `sudo docker exec k3d-buildbarn-server-0 du -sh /var/lib/rancher/k3s/storage/pvc-*`
+- Check reproxy upload errors: `grep "failed to upload" <aosp>/out/soong/.temp/rbe/reproxy.*.INFO.*`
 
 ### Actions queuing but not executing
 

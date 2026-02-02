@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: storage
+  namespace: buildbarn
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+      - name: storage
+        resources:
+          requests:
+            cpu: "2"
+            memory: 4Gi
+          limits:
+            memory: 16Gi
+      initContainers:
+      - name: volume-init
+        resources:
+          requests:
+            cpu: 100m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi

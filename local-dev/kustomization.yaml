@@ -1,0 +1,42 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../kubernetes
+
+# Override the configMap with our local-dev configs (single shard, reduced sizes)
+configMapGenerator:
+  - name: buildbarn-config
+    namespace: buildbarn
+    behavior: replace
+    files:
+      - config/common.libsonnet
+      - config/storage.jsonnet
+      - config/worker-ubuntu22-04.jsonnet
+      - config/browser.jsonnet
+      - config/frontend.jsonnet
+      - config/runner-ubuntu22-04.jsonnet
+      - config/scheduler.jsonnet
+
+# Strategic merge patches for replicas and resource limits
+patches:
+  - path: storage-local.yaml
+  - path: frontend-local.yaml
+  - path: scheduler-local.yaml
+  - path: worker-local.yaml
+  - path: worker-aaos-image-patch.yaml
+  - path: browser-local.yaml
+  - path: browser-service-patch.yaml
+    target:
+      kind: Service
+      name: browser
+  # JSON patch to use tmpfs for worker build/cache directories
+  - path: worker-tmpfs-patch.yaml
+    target:
+      kind: Deployment
+      name: worker-ubuntu22-04
+  # JSON patch to reduce CAS PVC from 33Gi to 10Gi
+  - path: storage-pvc-patch.yaml
+    target:
+      kind: StatefulSet
+      name: storage

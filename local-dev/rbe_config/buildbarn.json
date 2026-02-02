@@ -1,0 +1,19 @@
+{
+  "env": {
+    "RBE_CXX": "1",
+    "RBE_JAVAC": "1",
+    "RBE_R8": "1",
+    "RBE_D8": "1",
+    "RBE_instance": "",
+    "RBE_service": "grpc://localhost:8980",
+    "RBE_service_no_auth": "true",
+    "RBE_service_no_security": "true",
+    "RBE_credential_file": "build/soong/rbe_config/empty_creds.json",
+    "RBE_DIR": "prebuilts/remoteexecution-client/live",
+    "RBE_platform": "container-image=docker://aaos-runner:local,OSFamily=linux",
+    "RBE_CXX_EXEC_STRATEGY": "remote_local_fallback",
+    "RBE_JAVAC_EXEC_STRATEGY": "remote_local_fallback",
+    "RBE_R8_EXEC_STRATEGY": "remote_local_fallback",
+    "RBE_D8_EXEC_STRATEGY": "remote_local_fallback"
+  }
+}

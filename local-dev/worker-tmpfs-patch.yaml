@@ -1,0 +1,7 @@
+- op: replace
+  path: /spec/template/spec/volumes/2
+  value:
+    name: worker
+    emptyDir:
+      medium: Memory
+      sizeLimit: 16Gi

@@ -1,0 +1,13 @@
+# Kustomize strategic merge patch: swap the runner container image
+# from the generic act-22.04 to our custom AAOS runner with Android build deps.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-ubuntu22-04
+  namespace: buildbarn
+spec:
+  template:
+    spec:
+      containers:
+      - name: runner
+        image: aaos-runner:local

@@ -79,7 +79,8 @@ aaos-rbe-deploy/
     ├── sync-aosp.sh                 # Initialize and sync Android 15 AOSP source
     ├── setup-cluster.sh             # Create k3d cluster with port mappings
     ├── deploy.sh                    # Build image, import, clone bb-deployments, apply
-    └── start-build.sh               # Copy RBE config, envsetup, lunch, build
+    ├── start-build.sh               # Copy RBE config, envsetup, lunch, build
+    └── teardown.sh                  # Delete cluster, remove images, clean up
 ```
 
 ## Deployment Steps
@@ -249,6 +250,23 @@ The browser UI should be available at `http://localhost:8081`.
 
 - Verify the service: `kubectl -n buildbarn get svc browser`
 - Alternative: `kubectl -n buildbarn port-forward svc/browser 7984:7984` then visit `http://localhost:7984`
+
+## Teardown
+
+To remove the Buildbarn cluster and clean up resources:
+
+```bash
+./scripts/teardown.sh
+```
+
+This will:
+1. Delete the k3d cluster (`buildbarn`) and all Kubernetes resources within it
+2. Remove the `aaos-runner:local` Docker image
+3. Clean up any stale reproxy temp files (`/tmp/reproxy*`, `/tmp/RBE*`)
+
+The `bb-deployments` clone and AOSP source tree are **not** removed automatically. Delete them manually if no longer needed.
+
+To recreate the environment after teardown, run `setup-cluster.sh` and `deploy.sh` again.
 
 ## Upstream Reference
 

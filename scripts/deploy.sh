@@ -26,6 +26,11 @@ fi
 echo "Copying local-dev overlay to $BB_DEPLOY/local-dev/..."
 cp -r "$REPO_DIR/local-dev/" "$BB_DEPLOY/local-dev/"
 
+# Refresh kubeconfig so kubectl uses the correct API port
+echo "Refreshing kubeconfig for cluster '$CLUSTER_NAME'..."
+mkdir -p ~/.kube
+sudo k3d kubeconfig get "$CLUSTER_NAME" > ~/.kube/config
+
 # Apply with kustomize
 echo "Applying Kustomize overlay..."
 kubectl apply -k "$BB_DEPLOY/local-dev/"

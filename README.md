@@ -12,7 +12,7 @@ This repository contains only the custom overlay files. It is applied on top of 
 - **kubectl**: Kubernetes CLI
 - **kustomize**: built into `kubectl apply -k` (or standalone)
 - **repo** tool: [Android repo](https://source.android.com/docs/setup/download#installing-repo)
-- **~300GB disk** for AOSP source tree
+- **~500GB disk** for AOSP source tree (~300GB) plus CAS storage (~210GB)
 
 ## Architecture
 
@@ -38,7 +38,7 @@ This repository contains only the custom overlay files. It is applied on top of 
 
 | Component | Kind | Replicas | Description |
 |-----------|------|----------|-------------|
-| **bb-storage** | StatefulSet | 1 | CAS and action cache on local PVC (50Gi) |
+| **bb-storage** | StatefulSet | 1 | CAS and action cache on local PVC (210Gi) |
 | **bb-scheduler** | Deployment | 1 | Routes actions to workers; `platformKeyExtractor: static` |
 | **bb-worker** | Deployment | 4 | 8 concurrent actions each = 32 total slots; tmpfs-backed build/cache dirs |
 | **bb-runner** | Sidecar | (in worker) | Custom `aaos-runner:local` image with Android build deps (JDK 17, Python 3, etc.) |
@@ -58,7 +58,7 @@ aaos-rbe-deploy/
 │   │   ├── frontend.jsonnet         # gRPC :8980, scheduler routing, CAS/AC proxy
 │   │   ├── runner-ubuntu22-04.jsonnet
 │   │   ├── scheduler.jsonnet        # platformKeyExtractor: static, 1800s default timeout
-│   │   ├── storage.jsonnet          # Local block-device CAS (48GB) + AC (20MB)
+│   │   ├── storage.jsonnet          # Local block-device CAS (200GB) + AC (20MB)
 │   │   └── worker-ubuntu22-04.jsonnet  # 8 concurrency, 512MB cache, native build dirs
 │   ├── docker/
 │   │   └── aaos-runner/
@@ -71,7 +71,7 @@ aaos-rbe-deploy/
 │   ├── frontend-local.yaml          # No CPU limit, 16Gi memory limit
 │   ├── scheduler-local.yaml
 │   ├── storage-local.yaml           # No CPU limit, 16Gi memory limit
-│   ├── storage-pvc-patch.yaml       # CAS PVC set to 50Gi
+│   ├── storage-pvc-patch.yaml       # CAS PVC set to 210Gi
 │   ├── worker-aaos-image-patch.yaml # Swap runner image to aaos-runner:local
 │   ├── worker-local.yaml            # 4 replicas, no CPU limit, 32Gi memory limit
 │   └── worker-tmpfs-patch.yaml      # tmpfs emptyDir (16Gi) for /worker volume
@@ -199,9 +199,9 @@ With 16Gi tmpfs `sizeLimit` plus process memory for 8 concurrent compilation act
 
 Android's reproxy sends platform properties (`container-image`, `OSFamily`, etc.) that don't match any Buildbarn worker pool name. The `static` extractor ignores platform properties entirely, routing all actions to the single worker pool. Without this, actions queue indefinitely waiting for a matching pool.
 
-### 50Gi CAS storage
+### 210Gi CAS storage
 
-All CAS and AC data lives on one `storage-0` pod with a 50Gi PVC. The CAS block store is configured for 48GB and the AC for 20MB. A full AAOS build populates ~40GB of CAS data (toolchain binaries, source inputs, compilation outputs). The original 10Gi/8GB configuration caused constant eviction and `Object not found` errors on workers. On first build with a cold CAS, expect the initial actions to fail remotely while the toolchain (~3GB of clang libraries and headers) is uploaded; `remote_local_fallback` handles this transparently.
+All CAS and AC data lives on one `storage-0` pod with a 210Gi PVC. The CAS block store is configured for 200GB and the AC for 20MB. A full AAOS build from a clean `out/` populates well over 100GB of CAS data — the top actions each reference ~1.2GB of inputs (clang toolchain + proto headers shared across thousands of compilation actions), and with 130K+ total actions the unique blob count is substantial. Earlier configurations of 10Gi/8GB and 50Gi/48GB both caused eviction and `Object not found` errors mid-build. On first build with a cold CAS, expect the initial actions to fail remotely while the toolchain (~3GB of clang libraries and headers) is uploaded; `remote_local_fallback` handles this transparently.
 
 ### `remote_local_fallback` execution strategy
 
@@ -270,7 +270,7 @@ rm -f out/.lock
 
 On the first build after deploying (or after storage pod restart), the CAS is empty. reproxy must upload the entire input tree (~3GB for the clang toolchain alone) before remote execution can succeed. Early actions will fail remotely and fall back to local — this is expected with `remote_local_fallback`. The CAS warms up progressively and remote execution success rate increases as more inputs are uploaded. A full AAOS build populates ~40GB of CAS data.
 
-- Monitor CAS usage: `sudo docker exec k3d-buildbarn-server-0 du -sh /var/lib/rancher/k3s/storage/pvc-*`
+- Monitor CAS usage: `docker exec k3d-buildbarn-server-0 sh -c 'du -sh /var/lib/rancher/k3s/storage/pvc-*'`
 - Check reproxy upload errors: `grep "failed to upload" <aosp>/out/soong/.temp/rbe/reproxy.*.INFO.*`
 
 ### Actions queuing but not executing
@@ -287,6 +287,32 @@ The browser UI should be available at `http://localhost:8081`.
 
 - Verify the service: `kubectl -n buildbarn get svc browser`
 - Alternative: `kubectl -n buildbarn port-forward svc/browser 7984:7984` then visit `http://localhost:7984`
+
+## Clean Build (preserving CAS cache)
+
+To clean build intermediates and rebuild from scratch while keeping the Buildbarn CAS warm (so actions are served from cache):
+
+```bash
+cd <aosp>
+rm -rf out/soong/.intermediates out/soong/.temp/rbe /tmp/reproxy* /tmp/RBE* out/.lock
+```
+
+Then restart the build:
+
+```bash
+AOSP_ROOT=/path/to/aosp ./scripts/start-build.sh
+```
+
+Because the CAS still contains outputs from the previous build, reproxy will get cache hits for actions whose inputs haven't changed. This is useful for verifying that the RBE cache is working correctly.
+
+To clean the entire `out/` directory (full rebuild including soong bootstrap):
+
+```bash
+cd <aosp>
+rm -rf out/
+```
+
+**Note**: Cleaning `out/` forces soong to re-bootstrap and re-upload all inputs to the CAS. The first build after a full clean behaves like a cold-CAS build even if the CAS still has data, because reproxy needs to re-discover input trees.
 
 ## Teardown
 

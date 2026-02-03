@@ -25,7 +25,7 @@ local common = import 'common.libsonnet';
           source: {
             file: {
               path: '/storage-cas/blocks',
-              sizeBytes: 48 * 1024 * 1024 * 1024,
+              sizeBytes: 200 * 1024 * 1024 * 1024,
             },
           },
           spareBlocks: 3,

@@ -61,6 +61,9 @@ export RBE_D8_EXEC_STRATEGY=remote_local_fallback
 echo "Starting AAOS build with RBE (NINJA_REMOTE_NUM_JOBS=$NINJA_REMOTE_NUM_JOBS)..."
 
 cd "$AOSP_ROOT"
+
+# AOSP scripts reference unset variables — disable -u for sourcing
+set +u
 source build/envsetup.sh
 lunch sdk_car_x86_64-trunk_staging-userdebug
 m
